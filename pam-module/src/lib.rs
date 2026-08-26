@@ -115,16 +115,6 @@ impl PamHooks for RustFpPam {
         }
 
         let (tx, rx) = channel();
-        // Exit on Ctrl+C
-        // Sometimes can fail with the `MultipleHandlers` error
-        let _ = ctrlc::set_handler({
-            let tx = tx.clone();
-            move || {
-                // Useful for debugging
-                // Command::new("play").arg("https://www.myinstants.com/media/sounds/sudden-suspense-sound-effect.mp3").output().unwrap();
-                let _ = tx.send(Message::Result(PAM_ABORT));
-            }
-        });
         // Exit if the screen was unlocked by typing the password
         thread::spawn({
             let tx = tx.clone();

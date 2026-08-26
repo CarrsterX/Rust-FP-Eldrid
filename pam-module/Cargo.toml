@@ -15,5 +15,4 @@ postcard = "1.0.8"
 rand = "0.8.5"
 rust-fp = { path = "../rust-fp" }
 zbus = "4.3.0"
-ctrlc = { version = "3.4.4", features = ["termination"] }
 libc = "0.2"
