@@ -25,7 +25,7 @@ Currently, `rust-fp` supports Chromebook fingerprint readers. Other people can a
 Desktop Environment | Status      | Comments
 --------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 KDE Plasma          | Working     | Works by replacing libfprint PAM module with rust-fp PAM module
-GNOME               | Not working | Just replacing libfprint PAM module with rust-fp PAM module doesn't work. See https://github.com/ChocolateLoverRaj/rust-fp/issues/3
+GNOME               | Working     | Needs the PAM module to announce itself with PAM_TEXT_INFO before blocking on the sensor, otherwise no dialog is ever shown. On distros where polkit-agent-helper-1 is a socket-activated systemd unit, that unit also needs `StandardError=journal` so the module's stderr does not corrupt the helper protocol.
 COSMIC              | Planned     | Since COSMIC is written in Rust 🦀, it shouldn't be too hard to add nice support for rust-fp unlock. Maybe even skip PAM entirely and directly add rust-fp integration to COSMIC. Once COSMIC is officially released and I switch to COSMIC, I'll work on this.
 
 If you get this working with another DE, create a PR adding it to the table.
