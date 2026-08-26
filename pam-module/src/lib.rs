@@ -8,7 +8,7 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 use pam::constants::PamResultCode::{PAM_ABORT, PAM_AUTH_ERR, PAM_SUCCESS};
-use pam::constants::{PamFlag, PamResultCode, PAM_ERROR_MSG};
+use pam::constants::{PamFlag, PamResultCode, PAM_ERROR_MSG, PAM_TEXT_INFO};
 use pam::conv::Conv;
 use pam::module::{PamHandle, PamHooks};
 use pollster::block_on;
@@ -245,6 +245,13 @@ impl PamHooks for RustFpPam {
                 return err;
             }
         };
+        // Tell the user what is being waited for. The module blocks on the
+        // sensor before any prompt is issued, so without this the screen stays
+        // empty and there is nothing to indicate a finger is expected.
+        if let Err(e) = conv.send(PAM_TEXT_INFO, "Touch the fingerprint sensor") {
+            eprintln!("rust-fp: could not show the fingerprint prompt: {e:?}");
+        }
+
         for message in rx {
             match message {
                 Message::Error(message) => {
