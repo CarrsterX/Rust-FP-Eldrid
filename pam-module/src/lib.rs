@@ -43,7 +43,7 @@ impl PamHooks for RustFpPam {
             move || {
                 // Useful for debugging
                 // Command::new("play").arg("https://www.myinstants.com/media/sounds/sudden-suspense-sound-effect.mp3").output().unwrap();
-                tx.send(Message::Result(PAM_ABORT)).unwrap();
+                let _ = tx.send(Message::Result(PAM_ABORT));
             }
         });
         // Exit if the screen was unlocked by typing the password
@@ -53,7 +53,7 @@ impl PamHooks for RustFpPam {
                 if wait_until_unlock().is_ok() {
                     // Useful for debugging
                     // Command::new("play").arg("https://www.myinstants.com/media/sounds/sudden-suspense-sound-effect.mp3").output().unwrap();
-                    tx.send(Message::Result(PAM_ABORT)).unwrap();
+                    let _ = tx.send(Message::Result(PAM_ABORT));
                 }
             }
         });
@@ -64,24 +64,52 @@ impl PamHooks for RustFpPam {
                 let authenticate = {
                     let tx = tx.clone();
                     move || -> PamResultCode {
-                        let mut templates = block_on(get_templates()).unwrap();
+                        let mut templates = match block_on(get_templates()) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                eprintln!("rust-fp: cannot read templates: {e}");
+                                return PAM_AUTH_ERR;
+                            }
+                        };
                         if !templates.is_empty() {
-                            let connection = Connection::system().unwrap();
-                            let proxy = RustFpProxyBlocking::new(&connection).unwrap();
+                            let connection = match Connection::system() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("rust-fp: no system bus: {e}");
+                                    return PAM_AUTH_ERR;
+                                }
+                            };
+                            let proxy = match RustFpProxyBlocking::new(&connection) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    eprintln!("rust-fp: rust-fp service unavailable: {e}");
+                                    return PAM_AUTH_ERR;
+                                }
+                            };
                             let templates_vec = templates.iter().collect::<Vec<_>>();
                             let max_attempts = 5;
                             for attempt in 0..max_attempts {
-                                let output: MatchOutput = from_bytes(
-                                    &proxy
-                                        .match_templates(
-                                            templates_vec
-                                                .iter()
-                                                .map::<Vec<u8>, _>(|(_k, v)| v.to_vec())
-                                                .collect(),
-                                        )
-                                        .unwrap(),
-                                )
-                                .unwrap();
+                                let raw = match proxy.match_templates(
+                                    templates_vec
+                                        .iter()
+                                        .map::<Vec<u8>, _>(|(_k, v)| v.to_vec())
+                                        .collect(),
+                                ) {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        // The daemon can die or be restarted while a
+                                        // match is outstanding.
+                                        eprintln!("rust-fp: match call failed: {e}");
+                                        return PAM_AUTH_ERR;
+                                    }
+                                };
+                                let output: MatchOutput = match from_bytes(&raw) {
+                                    Ok(o) => o,
+                                    Err(e) => {
+                                        eprintln!("rust-fp: undecodable match output: {e:?}");
+                                        return PAM_AUTH_ERR;
+                                    }
+                                };
                                 match output {
                                     MatchOutput::Match(MatchedOutput {
                                         index,
@@ -95,35 +123,36 @@ impl PamHooks for RustFpPam {
                                             );
                                             templates
                                                 .insert(matched_label.to_owned(), updated_template);
-                                            block_on(set_templates(&templates)).unwrap();
+                                            // Authentication already succeeded; failing to persist the
+                                            // adapted template must not revoke it.
+                                            if let Err(e) = block_on(set_templates(&templates)) {
+                                                eprintln!("rust-fp: could not persist template: {e}");
+                                            }
                                             eprintln!("Saved updated template");
                                         }
                                         return PAM_SUCCESS;
                                     }
                                     MatchOutput::NoMatch(error) => {
                                         let remaining_attempts = max_attempts - attempt - 1;
-                                        tx.send(Message::Error(format!(
+                                        let _ = tx.send(Message::Error(format!(
                                             "No match. {remaining_attempts} attempts remaining."
-                                        )))
-                                        .unwrap();
+                                        )));
                                         if let Some(error) = error {
-                                            tx.send(Message::Error(format!(
+                                            let _ = tx.send(Message::Error(format!(
                                                 "Error matching: {error:?}"
-                                            )))
-                                            .unwrap();
+                                            )));
                                         }
                                     }
                                 }
                             }
                             PAM_AUTH_ERR
                         } else {
-                            tx.send(Message::Error("No templates saved. Not matching.".into()))
-                                .unwrap();
+                            let _ = tx.send(Message::Error("No templates saved. Not matching.".into()));
                             PAM_AUTH_ERR
                         }
                     }
                 };
-                tx.send(Message::Result(authenticate())).unwrap();
+                let _ = tx.send(Message::Result(authenticate()));
             }
         });
         let conv = match pamh.get_item::<Conv>() {
