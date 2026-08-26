@@ -166,7 +166,10 @@ impl PamHooks for RustFpPam {
                                 }
                             };
                             let templates_vec = templates.iter().collect::<Vec<_>>();
-                            let max_attempts = 5;
+                            // Each attempt blocks on the sensor, and nothing is shown on screen while
+                            // it does. Retrying in here just delays the password prompt the
+                            // user is waiting for; let the PAM stack move on instead.
+                            let max_attempts = 1;
                             for attempt in 0..max_attempts {
                                 let raw = match proxy.match_templates(
                                     templates_vec
