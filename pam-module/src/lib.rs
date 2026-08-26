@@ -24,6 +24,67 @@ use crate::wait_until_unlock::wait_until_unlock;
 
 mod wait_until_unlock;
 
+/// `pam_get_user`, bound correctly.
+///
+/// pam-bindings 0.1.1 declares the out-parameter as `&*mut c_char` and hands
+/// it a *shared* reference to an immutable local, then reads that local back
+/// after the call. That is undefined behaviour: with optimisations enabled the
+/// compiler is entitled to assume the pointer never changed, so the null check
+/// always fires and the function returns `Err(PAM_SUCCESS)` even on success.
+///
+/// Callers who forward that code as their own result - the obvious way to
+/// write the error path - end up returning PAM_SUCCESS, authenticating with no
+/// check whatsoever. Bind it ourselves rather than rely on the fix landing
+/// upstream.
+fn pam_user(pamh: &PamHandle) -> Option<String> {
+    use std::ffi::CStr;
+    extern "C" {
+        fn pam_get_user(
+            pamh: *const libc::c_void,
+            user: *mut *const libc::c_char,
+            prompt: *const libc::c_char,
+        ) -> libc::c_int;
+    }
+    let mut ptr: *const libc::c_char = std::ptr::null();
+    let rc = unsafe {
+        pam_get_user(
+            pamh as *const PamHandle as *const libc::c_void,
+            &mut ptr,
+            std::ptr::null(),
+        )
+    };
+    if rc != 0 || ptr.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(str::to_owned)
+}
+
+/// Home directory of `user` according to the passwd database.
+///
+/// `home::home_dir()` reports the home of the *running process*, which for a
+/// system authentication helper is root's. Resolving the PAM user explicitly
+/// is what makes "authenticate user X" mean "match X's own templates".
+fn home_of(user: &str) -> Option<String> {
+    use std::ffi::{CStr, CString};
+    let c_user = CString::new(user).ok()?;
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe {
+        libc::getpwnam_r(
+            c_user.as_ptr(),
+            &mut pwd,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(pwd.pw_dir) }.to_str().ok().map(str::to_owned)
+}
+
 struct RustFpPam;
 pam::pam_hooks!(RustFpPam);
 
@@ -33,6 +94,24 @@ impl PamHooks for RustFpPam {
         enum Message {
             Error(String),
             Result(PamResultCode),
+        }
+
+        // Point $HOME at the user being authenticated before any thread is
+        // spawned (set_var is not thread-safe). get_templates()/set_templates()
+        // derive their path from home_dir(), which consults $HOME first.
+        let username = match pam_user(pamh) {
+            Some(u) => u,
+            None => {
+                eprintln!("rust-fp: could not determine the PAM user");
+                return PAM_AUTH_ERR;
+            }
+        };
+        match home_of(&username) {
+            Some(dir) => std::env::set_var("HOME", dir),
+            None => {
+                eprintln!("rust-fp: no home directory for user {username}");
+                return PAM_AUTH_ERR;
+            }
         }
 
         let (tx, rx) = channel();
