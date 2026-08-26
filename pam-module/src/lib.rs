@@ -11,7 +11,6 @@ use pam::constants::PamResultCode::{PAM_ABORT, PAM_AUTH_ERR, PAM_SUCCESS};
 use pam::constants::{PamFlag, PamResultCode, PAM_ERROR_MSG};
 use pam::conv::Conv;
 use pam::module::{PamHandle, PamHooks};
-use pam::pam_try;
 use pollster::block_on;
 use postcard::from_bytes;
 use zbus::blocking::Connection;
@@ -138,7 +137,10 @@ impl PamHooks for RustFpPam {
         for message in rx {
             match message {
                 Message::Error(message) => {
-                    pam_try!(conv.send(PAM_ERROR_MSG, &message));
+                    // A conversation that cannot render our message must not fail the
+                    // whole authentication: the stack still has to fall through
+                    // to the password module.
+                    let _ = conv.send(PAM_ERROR_MSG, &message);
                 }
                 Message::Result(result) => {
                     return result;
