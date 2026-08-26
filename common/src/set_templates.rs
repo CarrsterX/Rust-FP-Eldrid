@@ -55,9 +55,14 @@ pub async fn set_templates(templates: &Templates) -> Result<(), Error> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        // Without this a template that encodes smaller than its predecessor
+        // leaves stale trailing bytes behind.
+        .truncate(true)
         .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o600)
         .open(get_fp_file().map_err(Error::FpFile)?)
         .map_err(Error::Open)?;
-    file.write(&vec).map_err(Error::Write)?;
+    // write() may be partial; the remainder was silently dropped.
+    file.write_all(&vec).map_err(Error::Write)?;
     Ok(())
 }
