@@ -1,12 +1,13 @@
 use std::fmt::{Display, Formatter};
 use std::io;
 
-use async_std::fs::{create_dir_all, OpenOptions};
-use async_std::io::WriteExt;
 use rmp_serde::encode;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 
 use crate::fp_file;
 use crate::fp_file::{get_fp_dir, get_fp_file};
+use crate::get_templates::checked_fp_dir;
 use crate::template::Templates;
 
 #[derive(Debug)]
@@ -48,15 +49,15 @@ impl Display for Error {
 
 pub async fn set_templates(templates: &Templates) -> Result<(), Error> {
     let vec = encode::to_vec(templates).map_err(Error::Encode)?;
-    create_dir_all(get_fp_dir().map_err(Error::FpDir)?)
-        .await
-        .map_err(Error::CreateDir)?;
-    let mut file = OpenOptions::new()
+    std::fs::create_dir_all(get_fp_dir().map_err(Error::FpDir)?).map_err(Error::CreateDir)?;
+    // Re-check after creating it: root is about to write here.
+    checked_fp_dir().map_err(Error::CreateDir)?;
+    let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(get_fp_file().map_err(Error::FpFile)?)
-        .await
         .map_err(Error::Open)?;
-    file.write(&vec).await.map_err(Error::Write)?;
+    file.write(&vec).map_err(Error::Write)?;
     Ok(())
 }
