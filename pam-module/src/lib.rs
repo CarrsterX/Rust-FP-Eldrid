@@ -89,15 +89,15 @@ impl PamHooks for RustFpPam {
                                         updated_template,
                                     }) => {
                                         let matched_label = templates_vec[index].0;
-                                        println!("Matched: {matched_label}.");
+                                        eprintln!("Matched: {matched_label}.");
                                         if let Some(updated_template) = updated_template {
-                                            println!(
+                                            eprintln!(
                                                 "Template was updated. Saving updated template..."
                                             );
                                             templates
                                                 .insert(matched_label.to_owned(), updated_template);
                                             block_on(set_templates(&templates)).unwrap();
-                                            println!("Saved updated template");
+                                            eprintln!("Saved updated template");
                                         }
                                         return PAM_SUCCESS;
                                     }
@@ -131,7 +131,7 @@ impl PamHooks for RustFpPam {
             Ok(Some(conv)) => conv,
             Ok(None) => todo!(),
             Err(err) => {
-                println!("Couldn't get pam_conv");
+                eprintln!("Couldn't get pam_conv");
                 return err;
             }
         };
