@@ -1,3 +1,6 @@
 [workspace]
 members = ["pam-module", "cli", "common", "dbus-interface", "rust-fp"]
 resolver = "2"
+
+[patch."https://github.com/ChocolateLoverRaj/crosec-rs/"]
+crosec = { path = "crosec/crosec" }

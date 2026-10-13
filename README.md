@@ -1,122 +1,112 @@
-# `rust-fp`
-A better fingerprint library than `libfprint`
+# Rust-FP-Eldrid
 
-## Why
-- `libfprint` does not support Chromebook fingerprint readers
-- `libfprint` seems to not support fingerprint readers with their own built-in matching
-- `libfprint` is written in C, not Rust
-- `libfprint` is hard to use
+An improved version of `rust-fp` featuring native support for the **FpInfo V2** protocol and complete integration with **GNOME (sudo, Polkit, and GDM lock screen)**, developed and tested on the Chromebook **"Eldrid"** (Intel 11th Gen Tiger Lake / HP Chromebook x360 14c and similar motherboards equipped with ChromeOS FPMCU).
 
-## Goals
-- Support enrolling fingerprints through a GUI and CLI
-- Support authenticating with fingerprints with PAM
-- Be easy to develop new drivers, even if you just have 1 test device and it's the same device that you're using to code
-- Support Chromebook fingerprint sensors
-- Be modular and easy to use in non-Linux environments (such as RedoxOS)
-- Be easy to set up a development environment to build and edit the code
-- Provide high quality auto-complete in code editors
-- Be as close to 100% Rust as possible with minimal non-Rust dependencies
+---
 
-## Status
-### Drivers
-Currently, `rust-fp` supports Chromebook fingerprint readers. Other people can add drivers for their own fp sensors.
+## 🌟 Key Features & Improvements
 
-### Integration with desktop environments
-Desktop Environment | Status      | Comments
---------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-KDE Plasma          | Working     | Works by replacing libfprint PAM module with rust-fp PAM module
-GNOME               | Working     | Needs the PAM module to announce itself with PAM_TEXT_INFO before blocking on the sensor, otherwise no dialog is ever shown. On distros where polkit-agent-helper-1 is a socket-activated systemd unit, that unit also needs `StandardError=journal` so the module's stderr does not corrupt the helper protocol.
-COSMIC              | Planned     | Since COSMIC is written in Rust 🦀, it shouldn't be too hard to add nice support for rust-fp unlock. Maybe even skip PAM entirely and directly add rust-fp integration to COSMIC. Once COSMIC is officially released and I switch to COSMIC, I'll work on this.
+1. **Native `FpInfo V2` Protocol Support (FPC / Tiger Lake Sensors)**:
+   - Modern Chromebooks with ChromeOS FPMCU and FPC (Fingerprint Cards AB) sensors do not support the older V1 command protocol (`versions mask = 0xC`). The upstream `crosec` crate panicked with `fp doesn't support V1`.
+   - Added full implementation and response decoding for V2 packets (196 bytes) supporting template sizes of 5156 bytes.
+2. **Seamless GNOME Shell & GDM Compatibility**:
+   - Out-of-the-box support for GNOME graphical authentication dialogs (**Polkit / `pkexec`**).
+   - Support for unlocking from the GNOME lock screen (**GDM / `/etc/pam.d/gdm-password`**).
+   - Fully compatible with **`sudo`** authentication in terminal sessions.
+3. **Automated Installer & Uninstaller**:
+   - Bash scripts that handle installing binaries, setting up D-Bus permissions, configuring systemd services, and managing the PAM stack on Fedora and RPM-based distributions.
 
-If you get this working with another DE, create a PR adding it to the table.
+---
 
-## Installation
-### NixOS
-In your `flake.nix`, add the following input:
-```nix
-rust-fp.url = "github:ChocolateLoverRaj/rust-fp";
-```
-Then destructure the input:
-```nix
-{ self, nixpkgs, rust-fp, ... }@inputs:
-```
-Then use the default module:
-```nix
-rust-fp.nixosModules.default
-```
-[Example of using `rust-fp` on Jinlon](https://github.com/ChocolateLoverRaj/nixos-system-config/blob/main/flake.nix)
+## 👥 Acknowledgements & Credits
 
-### Manually, in normal mutable Linux distros
-#### Get the code
-```sh
-git clone https://github.com/ChocolateLoverRaj/rust-fp
-```
+This project is an open-source fork built upon the excellent work of the community:
 
-#### Install [Rust 🦀](https://www.rust-lang.org/)
+- **[ChocolateLoverRaj/rust-fp](https://github.com/ChocolateLoverRaj/rust-fp)** & **[crosec-rs](https://github.com/ChocolateLoverRaj/crosec-rs)**:
+  Original author of the library, D-Bus service architecture, and `rust-fp` driver framework.
+- **[yuexiaoyong-star/rust-fp](https://github.com/yuexiaoyong-star/rust-fp)**:
+  Contributions towards GNOME Polkit agent helper integration and safe PAM handling.
+- **[CarrsterX](https://github.com/CarrsterX)**:
+  Reverse engineering and implementation of the `FpInfo V2` protocol, GDM lock-screen PAM integration, and automated system deployment scripts.
 
-#### Install the build dependency package
-##### With Nix
-Even if you're not on NixOS, you can probably install [`Nix`](https://nixos.org/download/) on any distro and just get everything you need with `nix develop`.
-##### Without Nix
-Or you can find the packages that your distribution provides and install them with your other package manager. You probably need `pam`, and maybe `clang`.
+---
 
-#### Build everything
-Run
-```sh
-cargo b --release
-```
-That should build everything. If you are testing changes to the code, then just run `cargo b` to build in debug mode.
+## 📋 Prerequisites
 
-#### Install D-Bus config
-```sh
-sudo cp dbus-interface/org.rust_fp.RustFp.conf /usr/share/dbus-1/system.d
-```
-
-#### Install `rust-fp-dbus-interface`
-```sh
-sudo cp target/release/rust-fp-dbus-interface /usr/local/bin
-```
-
-#### Create the systemd service
-Create a file `/etc/systemd/system/rust-fp-dbus-interface.service`:
-```
-[Unit]
-Description=Gives normal user access to enrolling and matching fingerprints
-
-[Service]
-ExecStart=/usr/local/bin/rust-fp-dbus-interface
-Type=exec
-
-[Install]
-WantedBy=multi-user.target
-```
-You can start it with
+On Fedora / RHEL / derivatives:
 ```bash
-sudo systemctl enable --now rust-fp-dbus-interface
+sudo dnf install -y git cargo gcc pam-devel
 ```
 
-#### Configure KDE fingerprint PAM
-Copy the PAM module to the location where PAM modules belong
+---
+
+## 🚀 Build & Installation
+
+### 1. Clone the repository
 ```bash
-sudo cp target/release/librust_fp_pam_module.so /lib64/security
-```
-Depending on the distro, the folder might be `/lib` or `/lib64`. On Fedora it's `/lib64`.
-
-Create / modify the file `/etc/pam.d/kde-fingerprint`:
-```
-auth    sufficient    librust_fp_pam_module.so
-account sufficient    librust_fp_pam_module.so
+git clone https://github.com/CarrsterX/Rust-FP-Eldrid.git
+cd Rust-FP-Eldrid
 ```
 
-#### Install the CLI
+### 2. Build binaries
 ```bash
-sudo cp target/release/rust-fp /usr/local/bin
+cargo build --release
 ```
 
-## Usage
-All you really need to do is enroll some fingerprints with the `rust-fp` CLI. Depending on your Chromebook, you will a maximum number of templates that can be loaded onto the fingerprint sensor at a time. It's probably 5. Just typing `rust-fp` will show the help page. Run `rust-fp add <name>` to enroll your fingerprints. Then lock the screen and you should be able to unlock with either your password or an enrolled fingerprint.
+### 3. Install to system
+Run the automated installation script with root privileges:
+```bash
+sudo ./install_fingerprint.sh
+```
 
-## Troubleshooting
-- See [the list of known issues](https://github.com/ChocolateLoverRaj/rust-fp/labels/bug).
-- Try restart the systemd service
-- Try clearing stored templates with `rust-fp clear` and then enrolling new ones.
+The installer configures:
+- System binaries in `/usr/local/bin` (`rust-fp`, `rust-fp-dbus-interface`).
+- PAM module in `/lib64/security/librust_fp_pam_module.so`.
+- D-Bus policy in `/usr/share/dbus-1/system.d/org.rust_fp.RustFp.conf`.
+- Systemd daemon unit `rust-fp-dbus-interface.service`.
+- PAM authentication stacks in `/etc/pam.d/sudo`, `/etc/pam.d/polkit-1`, and `/etc/pam.d/gdm-password`.
+
+---
+
+## 🖐️ Usage & Management
+
+Manage your enrolled fingerprints as a standard user (**without `sudo`**):
+
+### Enroll a new finger
+```bash
+rust-fp add index
+```
+Follow the on-screen instructions, placing your finger on the sensor until completion reaches 100%.
+
+### List saved fingerprints
+```bash
+rust-fp list
+```
+
+### Test authentication in terminal
+```bash
+sudo -k && sudo whoami
+```
+Touch the fingerprint sensor when prompted to authorize.
+
+### Screen unlock
+Lock your screen (`Super + L`) and touch the enrolled sensor to instantly unlock.
+
+### Remove fingerprints
+- To delete a specific fingerprint:
+  ```bash
+  rust-fp remove index
+  ```
+- To clear all stored templates:
+  ```bash
+  rust-fp clear
+  ```
+
+---
+
+## 🧹 Uninstallation
+
+To revert all system configurations and restore original PAM files:
+```bash
+sudo ./uninstall_fingerprint.sh
+```
