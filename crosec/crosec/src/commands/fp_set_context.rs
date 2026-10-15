@@ -41,8 +41,8 @@ pub fn fp_set_context<File: AsRawFd>(file: &mut File, user_id: UserId) -> EcCmdR
         },
         file.as_raw_fd(),
     )?;
-    let mut tries = 20;
-    let delay = Duration::from_millis(100);
+    let mut tries = 50;
+    let delay = Duration::from_millis(10);
     loop {
         sleep(delay);
         let result = ec_command_bytemuck(

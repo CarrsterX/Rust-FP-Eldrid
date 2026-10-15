@@ -115,8 +115,9 @@ impl OpenedCrosFp {
     /// The context gets reset when the sensor gets reset
     /// It is possible that the seed doesn't get reset but the context does
     fn set_context(&mut self) {
+        // Clear templates by resetting context with empty user_id first
+        let _ = fp_set_context(&mut self.file, [0x00; 32]);
         fp_set_context(&mut self.file, [0xaa; 32]).unwrap();
-        // Setting context always clears templates, even if the context was previously set to the same value
         self.loaded_templates_hashes.clear();
     }
 
@@ -127,11 +128,9 @@ impl OpenedCrosFp {
             let actual_loaded_templates_count = info.template_valid;
             if actual_loaded_templates_count == stored_loaded_templates_count {
                 // Assume templates have not changed
-            } else if info.template_valid == 0 {
-                self.loaded_templates_hashes.clear();
             } else {
-                // Something is wrong. Panic instead of causing undefined behaviour
-                panic!("Expected {stored_loaded_templates_count} or 0 templates to be loaded, but actually {actual_loaded_templates_count} templates are loaded.")
+                // Templates changed or cleared (e.g. after sleep/suspend or enrollment)
+                self.loaded_templates_hashes.clear();
             }
         }
     }
@@ -223,7 +222,13 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
         templates: &'a [Vec<u8>],
     ) -> BoxFuture<Result<MatchOutput, Box<dyn Error>>> {
         Box::pin(async move {
-            let hashes = templates
+            let max_templates = self.fp_info.template_max as usize;
+            let effective_templates = if templates.len() > max_templates {
+                &templates[..max_templates]
+            } else {
+                templates
+            };
+            let hashes = effective_templates
                 .iter()
                 .map(|template| {
                     let mut hasher = DefaultHasher::default();
@@ -239,10 +244,8 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                 fp_mode(&mut self.file, FpMode::Reset as u32)
                     .map_err(|_e| format!("Error doing {:?}", FpMode::Reset))?;
                 self.set_context();
-                // Without waiting a bit, the template uploading can fail.
-                // Maybe 10ms is enough, idk what is the smallest amount that works 99% of the time.
                 sleep(Duration::from_millis(10)).await;
-                for template in templates {
+                for template in effective_templates {
                     fp_upload_template(
                         &mut self.file,
                         &self.protocol_info,

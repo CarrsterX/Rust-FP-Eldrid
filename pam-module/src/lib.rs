@@ -7,7 +7,7 @@ use std::ffi::CStr;
 use std::sync::mpsc::channel;
 use std::thread;
 
-use pam::constants::PamResultCode::{PAM_ABORT, PAM_AUTH_ERR, PAM_SUCCESS};
+use pam::constants::PamResultCode::{PAM_ABORT, PAM_AUTH_ERR, PAM_AUTHINFO_UNAVAIL, PAM_SUCCESS};
 use pam::constants::{PamFlag, PamResultCode, PAM_ERROR_MSG, PAM_TEXT_INFO};
 use pam::conv::Conv;
 use pam::module::{PamHandle, PamHooks};
@@ -109,6 +109,24 @@ fn home_of(user: &str) -> Option<String> {
     unsafe { CStr::from_ptr(pwd.pw_dir) }.to_str().ok().map(str::to_owned)
 }
 
+const MAX_HARDWARE_TEMPLATES: usize = 5;
+
+fn finger_priority(name: &str) -> usize {
+    match name.to_ascii_lowercase().as_str() {
+        "right-index-finger" | "indice" | "index" | "right-index" => 0,
+        "right-thumb" | "pulgar" | "thumb" => 1,
+        "left-index-finger" | "left-index" => 2,
+        "left-thumb" => 3,
+        "right-middle-finger" | "right-middle" => 4,
+        "left-middle-finger" | "left-middle" => 5,
+        "right-ring-finger" | "right-ring" => 6,
+        "left-ring-finger" | "left-ring" => 7,
+        "right-little-finger" | "right-little" => 8,
+        "left-little-finger" | "left-little" => 9,
+        _ => 10,
+    }
+}
+
 struct RustFpPam;
 pam::pam_hooks!(RustFpPam);
 
@@ -176,19 +194,27 @@ impl PamHooks for RustFpPam {
                                 Ok(p) => p,
                                 Err(e) => {
                                     eprintln!("rust-fp: rust-fp service unavailable: {e}");
-                                    return PAM_AUTH_ERR;
+                                    return PAM_AUTHINFO_UNAVAIL;
                                 }
                             };
-                            let templates_vec = templates.iter().collect::<Vec<_>>();
+                            let mut templates_vec = templates.iter().collect::<Vec<_>>();
+                            templates_vec.sort_by(|a, b| {
+                                finger_priority(a.0).cmp(&finger_priority(b.0)).then_with(|| a.0.cmp(b.0))
+                            });
                             // Each attempt blocks on the sensor, and nothing is shown on screen while
                             // it does. Retrying in here just delays the password prompt the
                             // user is waiting for; let the PAM stack move on instead.
                             let max_attempts = 3;
                             for attempt in 0..max_attempts {
+                                let batch: &[(&String, &Vec<u8>)] = if templates_vec.len() <= MAX_HARDWARE_TEMPLATES || attempt == 0 {
+                                    &templates_vec[..templates_vec.len().min(MAX_HARDWARE_TEMPLATES)]
+                                } else {
+                                    &templates_vec[MAX_HARDWARE_TEMPLATES..]
+                                };
                                 let raw = match proxy.match_templates(
-                                    templates_vec
+                                    batch
                                         .iter()
-                                        .map::<Vec<u8>, _>(|(_k, v)| v.to_vec())
+                                        .map::<Vec<u8>, _>(|(_k, v)| (*v).clone())
                                         .collect(),
                                 ) {
                                     Ok(r) => r,
@@ -196,7 +222,7 @@ impl PamHooks for RustFpPam {
                                         // The daemon can die or be restarted while a
                                         // match is outstanding.
                                         eprintln!("rust-fp: match call failed: {e}");
-                                        return PAM_AUTH_ERR;
+                                        return PAM_AUTHINFO_UNAVAIL;
                                     }
                                 };
                                 let output: MatchOutput = match from_bytes(&raw) {
@@ -211,7 +237,11 @@ impl PamHooks for RustFpPam {
                                         index,
                                         updated_template,
                                     }) => {
-                                        let matched_label = templates_vec[index].0;
+                                        if index >= batch.len() {
+                                            eprintln!("rust-fp: invalid match index {index} for batch size {}", batch.len());
+                                            return PAM_AUTH_ERR;
+                                        }
+                                        let matched_label = batch[index].0;
                                         eprintln!("Matched: {matched_label}.");
                                         if let Some(updated_template) = updated_template {
                                             eprintln!(

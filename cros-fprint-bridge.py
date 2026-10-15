@@ -142,6 +142,14 @@ class FprintDevice(dbus.service.Object):
         user = self.claimed_user or 'carrster'
         self.EnrollStop()
         self._enroll_stop_requested = False
+
+        # FPMCU hardware limit is 5 templates
+        current_enrolled = get_enrolled_fingers(user)
+        if finger_name not in current_enrolled and len(current_enrolled) >= 5:
+            sys.stderr.write(f"cros-fprint-bridge: maximum enrolled fingers (5) reached, rejecting {finger_name}\n")
+            GLib.idle_add(self.EnrollStatus, "enroll-data-full", True)
+            return
+
         self._enroll_thread = threading.Thread(
             target=self._run_enroll_worker,
             args=(user, finger_name),
