@@ -9,10 +9,13 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
-echo "[*] Disabling and removing systemd service..."
+echo "[*] Disabling and removing systemd services..."
 systemctl disable --now rust-fp-dbus-interface.service 2>/dev/null || true
+systemctl disable --now cros-fprint-bridge.service 2>/dev/null || true
 rm -f /etc/systemd/system/rust-fp-dbus-interface.service
+rm -f /etc/systemd/system/cros-fprint-bridge.service
 rm -rf /etc/systemd/system/polkit-agent-helper@.service.d
+systemctl unmask fprintd.service 2>/dev/null || true
 systemctl daemon-reload
 
 echo "[*] Removing installed binaries..."
@@ -30,5 +33,7 @@ fi
 
 rm -f /etc/pam.d/polkit-1
 rm -f /etc/pam.d/gdm-password
+rm -f /etc/pam.d/gdm-fingerprint
+rm -f /usr/local/bin/cros-fprint-bridge.py
 
 echo "[+] Fingerprint service uninstalled and configurations restored."

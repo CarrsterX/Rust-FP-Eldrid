@@ -9,9 +9,12 @@ An improved version of `rust-fp` featuring native support for the **FpInfo V2** 
 1. **Native `FpInfo V2` Protocol Support (FPC / Tiger Lake Sensors)**:
    - Modern Chromebooks with ChromeOS FPMCU and FPC (Fingerprint Cards AB) sensors do not support the older V1 command protocol (`versions mask = 0xC`). The upstream `crosec` crate panicked with `fp doesn't support V1`.
    - Added full implementation and response decoding for V2 packets (196 bytes) supporting template sizes of 5156 bytes.
-2. **Seamless GNOME Shell & GDM Compatibility**:
+2. **Native GDM Dual-Authentication (Parallel Password OR Fingerprint)**:
+   - Built-in lightweight D-Bus bridge (`cros-fprint-bridge.py`) emulating standard `net.reactivated.Fprint` properties.
+   - Enables GNOME Display Manager (GDM) and lock screen to run `gdm-fingerprint` and `gdm-password` in parallel:
+     - Type password and press Enter at any time -> logs in instantly and decrypts GNOME Keyring (preserving browser logins and saved passwords).
+     - Or touch the fingerprint sensor -> logs in instantly without touching the keyboard.
    - Out-of-the-box support for GNOME graphical authentication dialogs (**Polkit / `pkexec`**).
-   - Support for unlocking from the GNOME lock screen (**GDM / `/etc/pam.d/gdm-password`**).
    - Fully compatible with **`sudo`** authentication in terminal sessions.
 3. **Automated Installer & Uninstaller**:
    - Bash scripts that handle installing binaries, setting up D-Bus permissions, configuring systemd services, and managing the PAM stack on Fedora and RPM-based distributions.
@@ -64,7 +67,8 @@ The installer configures:
 - PAM module in `/lib64/security/librust_fp_pam_module.so`.
 - D-Bus policy in `/usr/share/dbus-1/system.d/org.rust_fp.RustFp.conf`.
 - Systemd daemon unit `rust-fp-dbus-interface.service`.
-- PAM authentication stacks in `/etc/pam.d/sudo`, `/etc/pam.d/polkit-1`, and `/etc/pam.d/gdm-password`.
+- D-Bus emulation bridge service `cros-fprint-bridge.service`.
+- PAM authentication stacks in `/etc/pam.d/sudo`, `/etc/pam.d/polkit-1`, and parallel `/etc/pam.d/gdm-fingerprint`.
 
 ---
 

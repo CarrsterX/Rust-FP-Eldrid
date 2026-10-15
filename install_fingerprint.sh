@@ -109,19 +109,86 @@ fi
 
 echo ""
 
-# 8. Configure PAM for GDM / GNOME Lock Screen
-echo "[*] Configuring PAM for GDM / Lock Screen (/etc/pam.d/gdm-password)..."
-if [ ! -f /etc/pam.d/gdm-password ]; then
-    cp /usr/lib/pam.d/gdm-password /etc/pam.d/gdm-password
-    sed -i "/gdm-password-auth-substack/i auth       sufficient   librust_fp_pam_module.so" /etc/pam.d/gdm-password
-    chmod 644 /etc/pam.d/gdm-password
-    echo "[+] Configured /etc/pam.d/gdm-password with fingerprint auth support"
-else
-    if ! grep -q "librust_fp_pam_module.so" /etc/pam.d/gdm-password; then
-        sed -i "/gdm-password-auth-substack/i auth       sufficient   librust_fp_pam_module.so" /etc/pam.d/gdm-password
-        echo "[+] Added fingerprint auth rule to existing /etc/pam.d/gdm-password"
-    fi
-fi
+# 8. Configure GDM Dual Auth (Password OR Fingerprint in Parallel)
+echo "[*] Installing ChromeOS Fprint D-Bus Bridge for GNOME Shell..."
+cp "$DIR/cros-fprint-bridge.py" /usr/local/bin/cros-fprint-bridge.py
+chmod 755 /usr/local/bin/cros-fprint-bridge.py
+
+cat << 'UNIT' > /etc/systemd/system/cros-fprint-bridge.service
+[Unit]
+Description=ChromeOS Fingerprint to Fprint D-Bus Bridge for GDM
+After=dbus.service rust-fp-dbus-interface.service
+Conflicts=fprintd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/cros-fprint-bridge.py
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 644 /etc/systemd/system/cros-fprint-bridge.service
+
+# Mask fprintd so it does not conflict with our bridge
+systemctl mask fprintd.service 2>/dev/null || true
+systemctl stop fprintd.service 2>/dev/null || true
+
+# Restore clean /etc/pam.d/gdm-password (for instant password entry & GNOME Keyring unlock)
+echo "[*] Configuring /etc/pam.d/gdm-password for clean password auth..."
+cat << 'PAM_PASS' > /etc/pam.d/gdm-password
+auth     [success=done ignore=ignore default=bad] pam_selinux_permit.so
+auth        substack      gdm-password-auth-substack
+-auth       optional      pam_gnome_keyring.so
+-auth       optional      pam_oo7.so
+auth        include       postlogin
+
+account     required      pam_nologin.so
+account     include       password-auth
+
+password    substack       gdm-password-auth-substack
+-password   optional       pam_gnome_keyring.so use_authtok
+-password   optional       pam_oo7.so use_authtok
+
+session     required      pam_selinux.so close
+session     required      pam_loginuid.so
+session     required      pam_selinux.so open
+session     optional      pam_keyinit.so force revoke
+session     required      pam_namespace.so
+session     include       password-auth
+-session    optional      pam_gnome_keyring.so auto_start
+-session    optional      pam_oo7.so auto_start
+session     include       postlogin
+PAM_PASS
+chmod 644 /etc/pam.d/gdm-password
+
+# Configure /etc/pam.d/gdm-fingerprint for parallel biometric authentication
+echo "[*] Configuring /etc/pam.d/gdm-fingerprint for parallel biometric auth..."
+cat << 'PAM_FP' > /etc/pam.d/gdm-fingerprint
+#%PAM-1.0
+auth        [success=done ignore=ignore default=bad] pam_selinux_permit.so
+auth        required      pam_env.so
+auth        sufficient    librust_fp_pam_module.so
+auth        required      pam_deny.so
+
+account     required      pam_nologin.so
+account     include       password-auth
+
+session     required      pam_selinux.so close
+session     required      pam_loginuid.so
+session     required      pam_selinux.so open
+session     optional      pam_keyinit.so force revoke
+session     required      pam_namespace.so
+session     include       password-auth
+-session    optional      pam_gnome_keyring.so auto_start
+session     include       postlogin
+PAM_FP
+chmod 644 /etc/pam.d/gdm-fingerprint
+
+systemctl daemon-reload
+systemctl enable --now cros-fprint-bridge.service
+systemctl restart cros-fprint-bridge.service
 
 echo "=================================================================="
 echo " INSTALLATION COMPLETED SUCCESSFULLY! "
