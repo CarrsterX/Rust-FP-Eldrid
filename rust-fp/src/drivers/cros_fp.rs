@@ -290,24 +290,9 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                                         .unwrap();
                                     input_hash_index
                                 },
-                                updated_template: match data.update {
-                                    Some(Ok(_)) => {
-                                        let template = fp_download_template(
-                                            &mut self.file,
-                                            &self.fp_info,
-                                            &self.protocol_info,
-                                            data.index,
-                                        );
-                                        let template: Vec<u8> = template.into();
-                                        self.loaded_templates_hashes[data.index] = {
-                                            let mut hasher = DefaultHasher::default();
-                                            template.hash(&mut hasher);
-                                            hasher.finish()
-                                        };
-                                        Some(template)
-                                    }
-                                    _ => None,
-                                },
+                                // Skip slow 5KB template re-download over EC bus on successful match
+                                // to eliminate noticeable post-touch latency and prevent template cache invalidation.
+                                updated_template: None,
                             })
                         }
                         EcMkbpEventFingerprintMatchResult::NoMatch(result) => {

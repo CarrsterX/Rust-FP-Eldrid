@@ -257,4 +257,8 @@ impl PamHooks for RustFpPam {
         }
         PAM_AUTH_ERR
     }
+
+    fn sm_setcred(_pamh: &mut PamHandle, _args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        PAM_SUCCESS
+    }
 }
