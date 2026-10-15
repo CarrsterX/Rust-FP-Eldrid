@@ -148,8 +148,8 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                 self.set_context();
             } else if self.loaded_templates_hashes.is_empty() {
                 // Unless we already started enrolling, set the context since it may not be set
-                let fp_mode = fp_mode(&mut self.file, FpMode::DontChange as u32).unwrap();
-                match FpMode::from_repr(fp_mode) {
+                let current_fp_mode = fp_mode(&mut self.file, FpMode::DontChange as u32).unwrap_or(0);
+                match FpMode::from_repr(current_fp_mode) {
                     Some(FpMode::EnrollSession) => {
                         // Don't set context because we assume it is already set and you can't set context while enrolling
                     }
@@ -157,8 +157,8 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                         self.set_context();
                     }
                     _ => {
-                        // The fp should not be in any other mode. We can't set context unless it's reset
-                        panic!("Unknown fp mode: {fp_mode}")
+                        let _ = fp_mode(&mut self.file, FpMode::Reset as u32);
+                        self.set_context();
                     }
                 }
             }
@@ -167,15 +167,22 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                 FpMode::EnrollSession as u32 | FpMode::EnrollImage as u32,
             )
             .map_err(|_e| EnrollStepError::GenericError)?;
-            let data = match wait_event_async(&mut self.file, [EcMkbpEventType::Fingerprint])
-                .await
-                .map_err(|_e| EnrollStepError::GenericError)?
-            {
-                EcMkbpEvent::Fingerprint(event) => match event.rust() {
-                    EcMkbpEventFingerprintRust::Enroll(output) => Ok(output),
-                    _ => Err(EnrollStepError::GenericError),
-                },
-                _ => Err(EnrollStepError::GenericError),
+            let data = loop {
+                match wait_event_async(&mut self.file, [EcMkbpEventType::Fingerprint])
+                    .await
+                    .map_err(|_e| EnrollStepError::GenericError)?
+                {
+                    EcMkbpEvent::Fingerprint(event) => match event.rust() {
+                        EcMkbpEventFingerprintRust::Enroll(output) => break Ok(output),
+                        EcMkbpEventFingerprintRust::FingerDown
+                        | EcMkbpEventFingerprintRust::FingerUp
+                        | EcMkbpEventFingerprintRust::ImageReady => {
+                            continue;
+                        }
+                        _ => break Err(EnrollStepError::GenericError),
+                    },
+                    _ => break Err(EnrollStepError::GenericError),
+                }
             }?;
             match data.error {
                 None => Ok(match data.percentage {
