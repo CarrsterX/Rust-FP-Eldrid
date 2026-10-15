@@ -225,35 +225,30 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                 })
                 .collect::<Vec<_>>();
             self.check_if_templates_got_cleared();
-            // FIXME: Figure out why the uploading is in a loop
-            let fingerprint_event = loop {
-                self.ensure_seed_is_set().await;
-                println!(
-                    "Hashes: {hashes:?}. Loaded hashes: {:?}",
-                    self.loaded_templates_hashes
-                );
-                if hashes.iter().collect::<HashSet<_>>()
-                    != self.loaded_templates_hashes.iter().collect()
-                {
-                    fp_mode(&mut self.file, FpMode::Reset as u32)
-                        .map_err(|_e| format!("Error doing {:?}", FpMode::Reset))?;
-                    self.set_context();
-                    // Without waiting a bit, the template uploading can fail.
-                    // Maybe 10ms is enough, idk what is the smallest amount that works 99% of the time.
-                    sleep(Duration::from_millis(10)).await;
-                    for template in templates {
-                        fp_upload_template(
-                            &mut self.file,
-                            &self.protocol_info,
-                            &self.fp_info,
-                            &unsafe { FpTemplate::from_vec_unchecked(template.to_vec()) },
-                        )
-                        .map_err(|e| format!("Error uploading template: {e:?}"))?;
-                    }
-                    self.loaded_templates_hashes.clone_from(&hashes);
+            self.ensure_seed_is_set().await;
+            if hashes.iter().collect::<HashSet<_>>()
+                != self.loaded_templates_hashes.iter().collect()
+            {
+                fp_mode(&mut self.file, FpMode::Reset as u32)
+                    .map_err(|_e| format!("Error doing {:?}", FpMode::Reset))?;
+                self.set_context();
+                // Without waiting a bit, the template uploading can fail.
+                // Maybe 10ms is enough, idk what is the smallest amount that works 99% of the time.
+                sleep(Duration::from_millis(10)).await;
+                for template in templates {
+                    fp_upload_template(
+                        &mut self.file,
+                        &self.protocol_info,
+                        &self.fp_info,
+                        &unsafe { FpTemplate::from_vec_unchecked(template.to_vec()) },
+                    )
+                    .map_err(|e| format!("Error uploading template: {e:?}"))?;
                 }
-                fp_mode(&mut self.file, FpMode::Match as u32)
-                    .map_err(|_e| format!("Error doing {:?}", FpMode::Match))?;
+                self.loaded_templates_hashes.clone_from(&hashes);
+            }
+            fp_mode(&mut self.file, FpMode::Match as u32)
+                .map_err(|_e| format!("Error doing {:?}", FpMode::Match))?;
+            let fingerprint_event = loop {
                 let event = wait_event_async(
                     &mut self.file,
                     [EcMkbpEventType::Fingerprint, EcMkbpEventType::HostEvent],
@@ -261,7 +256,20 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
                 .await?;
                 match event {
                     EcMkbpEvent::Fingerprint(fingerprint_event) => {
-                        break fingerprint_event;
+                        match fingerprint_event.rust() {
+                            EcMkbpEventFingerprintRust::Match(_) => {
+                                break fingerprint_event;
+                            }
+                            EcMkbpEventFingerprintRust::FingerDown
+                            | EcMkbpEventFingerprintRust::FingerUp
+                            | EcMkbpEventFingerprintRust::ImageReady => {
+                                // Touch detected / capture in progress; keep waiting for match result
+                                continue;
+                            }
+                            _ => {
+                                break fingerprint_event;
+                            }
+                        }
                     }
                     EcMkbpEvent::HostEvent(host_event) => {
                         match host_event.rust().map_err(|unexpected_host_event| {

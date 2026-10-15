@@ -59,6 +59,30 @@ fn pam_user(pamh: &PamHandle) -> Option<String> {
     unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(str::to_owned)
 }
 
+fn pam_service(pamh: &PamHandle) -> Option<String> {
+    const PAM_SERVICE: libc::c_int = 1;
+    use std::ffi::CStr;
+    extern "C" {
+        fn pam_get_item(
+            pamh: *const libc::c_void,
+            item_type: libc::c_int,
+            item: *mut *const libc::c_char,
+        ) -> libc::c_int;
+    }
+    let mut ptr: *const libc::c_char = std::ptr::null();
+    let rc = unsafe {
+        pam_get_item(
+            pamh as *const PamHandle as *const libc::c_void,
+            PAM_SERVICE,
+            &mut ptr,
+        )
+    };
+    if rc != 0 || ptr.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(str::to_owned)
+}
+
 /// Home directory of `user` according to the passwd database.
 ///
 /// `home::home_dir()` reports the home of the *running process*, which for a
@@ -159,7 +183,7 @@ impl PamHooks for RustFpPam {
                             // Each attempt blocks on the sensor, and nothing is shown on screen while
                             // it does. Retrying in here just delays the password prompt the
                             // user is waiting for; let the PAM stack move on instead.
-                            let max_attempts = 1;
+                            let max_attempts = 3;
                             for attempt in 0..max_attempts {
                                 let raw = match proxy.match_templates(
                                     templates_vec
@@ -206,13 +230,13 @@ impl PamHooks for RustFpPam {
                                     }
                                     MatchOutput::NoMatch(error) => {
                                         let remaining_attempts = max_attempts - attempt - 1;
-                                        let _ = tx.send(Message::Error(format!(
-                                            "No match. {remaining_attempts} attempts remaining."
-                                        )));
-                                        if let Some(error) = error {
-                                            let _ = tx.send(Message::Error(format!(
-                                                "Error matching: {error:?}"
-                                            )));
+                                        if remaining_attempts == 0 {
+                                            let _ = tx.send(Message::Error("No match.".into()));
+                                            if let Some(error) = error {
+                                                let _ = tx.send(Message::Error(format!(
+                                                    "Error matching: {error:?}"
+                                                )));
+                                            }
                                         }
                                     }
                                 }
@@ -235,11 +259,14 @@ impl PamHooks for RustFpPam {
                 return err;
             }
         };
-        // Tell the user what is being waited for. The module blocks on the
-        // sensor before any prompt is issued, so without this the screen stays
-        // empty and there is nothing to indicate a finger is expected.
-        if let Err(e) = conv.send(PAM_TEXT_INFO, "Touch the fingerprint sensor") {
-            eprintln!("rust-fp: could not show the fingerprint prompt: {e:?}");
+        let is_gdm = pam_service(pamh).as_deref() == Some("gdm-fingerprint");
+        // Tell the user what is being waited for in interactive terminal sessions.
+        // Under GDM, GNOME Shell already shows the biometric indicator, and sending
+        // PAM_TEXT_INFO triggers GNOME Shell 2-second message hold timer.
+        if !is_gdm {
+            if let Err(e) = conv.send(PAM_TEXT_INFO, "Touch the fingerprint sensor") {
+                eprintln!("rust-fp: could not show the fingerprint prompt: {e:?}");
+            }
         }
 
         for message in rx {
