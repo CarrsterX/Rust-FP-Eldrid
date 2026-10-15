@@ -11,7 +11,7 @@ so that:
 import os
 import sys
 import pwd
-import struct
+import re
 import subprocess
 import threading
 import dbus
@@ -45,75 +45,52 @@ FINGER_ALIASES = {
     "left-thumb": "left-thumb",
 }
 
-def parse_msgpack_keys(filepath):
-    """Parse keys from rmp_serde / msgpack encoded template file without external deps."""
-    try:
-        with open(filepath, 'rb') as f:
-            data = f.read()
-    except Exception:
-        return []
 
-    if not data:
-        return []
+def get_enrolled_fingers(username):
+    """Retrieve enrolled fingers for a user via rust-fp list."""
+    if not username:
+        username = "carrster"
 
-    try:
-        pos = 0
-        first = data[pos]
-        pos += 1
-        if 0x80 <= first <= 0x8F:
-            count = first - 0x80
-        elif first == 0xDE:
-            count = struct.unpack_from('>H', data, pos)[0]
-            pos += 2
-        elif first == 0xDF:
-            count = struct.unpack_from('>I', data, pos)[0]
-            pos += 4
-        else:
-            return []
-
-        keys = []
-        for _ in range(count):
-            if pos >= len(data):
-                break
-            k_byte = data[pos]
-            pos += 1
-            if 0xA0 <= k_byte <= 0xBF:
-                k_len = k_byte - 0xA0
-            elif k_byte == 0xD9:
-                k_len = data[pos]; pos += 1
-            elif k_byte == 0xDA:
-                k_len = struct.unpack_from('>H', data, pos)[0]; pos += 2
-            elif k_byte == 0xDB:
-                k_len = struct.unpack_from('>I', data, pos)[0]; pos += 4
-            else:
-                break
-            key_str = data[pos:pos+k_len].decode('utf-8', errors='ignore')
-            pos += k_len
-            keys.append(key_str)
-            # Skip binary template value
-            if pos >= len(data):
-                break
-            v_byte = data[pos]; pos += 1
-            if v_byte == 0xC4:
-                v_len = data[pos]; pos += 1
-            elif v_byte == 0xC5 or v_byte == 0xDC:
-                v_len = struct.unpack_from('>H', data, pos)[0]; pos += 2
-            elif v_byte == 0xC6 or v_byte == 0xDD:
-                v_len = struct.unpack_from('>I', data, pos)[0]; pos += 4
-            else:
-                v_len = 0
-            pos += v_len
-        return keys
-    except Exception as e:
-        sys.stderr.write(f"cros-fprint-bridge: error parsing {filepath}: {e}\n")
-        return []
-
-def get_user_template_file(username):
     try:
         pw = pwd.getpwnam(username)
-        return os.path.join(pw.pw_dir, ".var", "cros-fp-templates")
     except KeyError:
-        return None
+        return []
+
+    env = os.environ.copy()
+    env["HOME"] = pw.pw_dir
+    env["USER"] = username
+
+    try:
+        res = subprocess.run(
+            ["/usr/local/bin/rust-fp", "list"],
+            env=env,
+            user=pw.pw_uid,
+            group=pw.pw_gid,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2.0
+        )
+        if res.returncode != 0:
+            return []
+        raw_keys = re.findall(r'"([^"]+)"', res.stdout)
+    except Exception as e:
+        sys.stderr.write(f"cros-fprint-bridge: error running rust-fp list: {e}\n")
+        return []
+
+    fingers = []
+    for k in raw_keys:
+        mapped = FINGER_ALIASES.get(k.lower(), k)
+        if mapped in STANDARD_FINGERS:
+            if mapped not in fingers:
+                fingers.append(mapped)
+        else:
+            for std in STANDARD_FINGERS:
+                if std not in fingers:
+                    fingers.append(std)
+                    break
+
+    return fingers
 
 
 class FprintDevice(dbus.service.Object):
@@ -127,26 +104,8 @@ class FprintDevice(dbus.service.Object):
 
     @dbus.service.method('net.reactivated.Fprint.Device', in_signature='s', out_signature='as')
     def ListEnrolledFingers(self, username):
-        tpl_path = get_user_template_file(username)
-        if not tpl_path or not os.path.exists(tpl_path):
-            return dbus.Array([], signature='s')
-
-        raw_keys = parse_msgpack_keys(tpl_path)
-        if not raw_keys:
-            return dbus.Array([], signature='s')
-
-        fingers = []
-        for k in raw_keys:
-            mapped = FINGER_ALIASES.get(k.lower(), k)
-            if mapped in STANDARD_FINGERS:
-                if mapped not in fingers:
-                    fingers.append(mapped)
-            else:
-                for std in STANDARD_FINGERS:
-                    if std not in fingers:
-                        fingers.append(std)
-                        break
-
+        target_user = username or self.claimed_user or 'carrster'
+        fingers = get_enrolled_fingers(target_user)
         return dbus.Array([dbus.String(f) for f in fingers], signature='s')
 
     @dbus.service.method('net.reactivated.Fprint.Device', in_signature='s', out_signature='')
@@ -210,15 +169,16 @@ class FprintDevice(dbus.service.Object):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        if finger_name == "right-index-finger":
-            subprocess.run(
-                ["/usr/local/bin/rust-fp", "remove", "indice"],
-                env=env,
-                user=pw.pw_uid,
-                group=pw.pw_gid,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+        for alias, std_name in FINGER_ALIASES.items():
+            if std_name == finger_name and alias != finger_name:
+                subprocess.run(
+                    ["/usr/local/bin/rust-fp", "remove", alias],
+                    env=env,
+                    user=pw.pw_uid,
+                    group=pw.pw_gid,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
 
         cmd = ["/usr/local/bin/rust-fp", "add", finger_name]
         try:
@@ -285,25 +245,27 @@ class FprintDevice(dbus.service.Object):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            if finger_name == "right-index-finger":
-                subprocess.run(
-                    ["/usr/local/bin/rust-fp", "remove", "indice"],
-                    env=env,
-                    user=pw.pw_uid,
-                    group=pw.pw_gid,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
+            for alias, std_name in FINGER_ALIASES.items():
+                if std_name == finger_name and alias != finger_name:
+                    subprocess.run(
+                        ["/usr/local/bin/rust-fp", "remove", alias],
+                        env=env,
+                        user=pw.pw_uid,
+                        group=pw.pw_gid,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
         except Exception as e:
             sys.stderr.write(f"cros-fprint-bridge: DeleteEnrolledFinger error: {e}\n")
 
     @dbus.service.method('net.reactivated.Fprint.Device', in_signature='s', out_signature='')
     def DeleteEnrolledFingers(self, username):
+        target_user = username or self.claimed_user or 'carrster'
         try:
-            pw = pwd.getpwnam(username)
+            pw = pwd.getpwnam(target_user)
             env = os.environ.copy()
             env["HOME"] = pw.pw_dir
-            env["USER"] = username
+            env["USER"] = target_user
             subprocess.run(
                 ["/usr/local/bin/rust-fp", "clear"],
                 env=env,
