@@ -16,13 +16,17 @@ Developed and thoroughly tested on the Chromebook platform **"Eldrid"** (Intel 1
    - Eliminated redundant post-match 5KB template downloads over the slow SPI/EC bus, dropping authentication latency from ~1.5 seconds down to an instant ~150ms.
    - Prevents sensor RAM cache invalidation and avoids SELinux permission denials during login/unlock.
 
-3. **Standard Security Architecture & Parallel Dual Auth**:
+3. **Lock Screen Zero-Lag Verification (Sub-10ms Polling & Deterministic PAM Priority)**:
+   - Resolved the 2.6-second delay on GDM / GNOME lock screen authentication by implementing deterministic PAM priority sorting and reducing context polling loops from 250ms down to sub-10ms in `fp_set_context.rs`.
+   - Fingerprint verification triggers immediately when placing a finger on the sensor, running seamlessly alongside password input workers.
+
+4. **Standard Security Architecture & Parallel Dual Auth**:
    - Follows modern OS security standards (matching Android, iOS, macOS Touch ID, and Windows Hello):
      - **Cold Boot (First Login):** Requires password entry to securely derive cryptographic keys and decrypt the user keyring (`gnome-keyring` / `kwallet`), preserving browser logins (Brave, Chrome, etc.) and system tokens.
      - **Daily Re-authentication:** Instant biometric unlocking on Lock Screen (`Super + L`), terminal `sudo`, and graphical Polkit elevation prompts.
    - Includes a lightweight D-Bus bridge (`cros-fprint-bridge.py`) that emulates `net.reactivated.Fprint`, enabling GNOME Shell to run parallel `gdm-fingerprint` and `gdm-password` workers.
 
-4. **Automated Installer & Uninstaller**:
+5. **Automated Installer & Uninstaller**:
    - Zero-touch Bash scripts that install system binaries, configure D-Bus policies, set up systemd services, and manage the PAM stacks on Fedora and RPM-based distributions.
 
 ---
